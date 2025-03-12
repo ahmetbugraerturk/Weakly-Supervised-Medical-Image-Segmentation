@@ -5,6 +5,123 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
+from scipy.ndimage import binary_dilation
+
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from models.cnn import UNet
+from data.dataset import get_data_loaders
+from utils.metrics import calculate_metrics, save_prediction_image
+
+def dice_loss(pred, target):
+    smooth = 1.0
+    pred = pred.view(-1)
+    target = target.view(-1)
+    intersection = (pred * target).sum()
+    return 1 - ((2. * intersection + smooth) / (pred.sum() + target.sum() + smooth))
+
+def entropy_loss(pred):
+    """Entropy regularization loss to encourage confident predictions"""
+    p = torch.sigmoid(pred)
+    return -torch.mean(p * torch.log(p + 1e-8) + (1 - p) * torch.log(1 - p + 1e-8))
+
+def grow_mask(mask, iterations=5):
+    """Expands nucleus center points until touching other masks."""
+    grown_mask = mask.clone()
+    for _ in range(iterations):
+        grown_mask = torch.tensor(binary_dilation(grown_mask.cpu().numpy()), dtype=torch.float32).to(mask.device)
+    return grown_mask
+
+def train(data_dir, output_dir, num_epochs=100, batch_size=8, learning_rate=1e-4):
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'checkpoints'), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'predictions'), exist_ok=True)
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    model = UNet().to(device)
+    train_loader, val_loader = get_data_loaders(data_dir, batch_size)
+    
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    writer = SummaryWriter(os.path.join(output_dir, 'logs'))
+    
+    best_val_loss = float('inf')
+    train_losses, val_losses = [], []
+    
+    for epoch in range(num_epochs):
+        model.train()
+        train_loss = 0
+        for images, masks in tqdm(train_loader, desc=f'Epoch {epoch+1}'):
+            images, masks = images.to(device), masks.to(device)
+            optimizer.zero_grad()
+            outputs = model(images)
+            
+            grown_masks = grow_mask(masks)
+            loss = dice_loss(outputs, grown_masks) + entropy_loss(outputs)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+        
+        train_loss /= len(train_loader)
+        writer.add_scalar('Loss/train', train_loss, epoch)
+        train_losses.append(train_loss)
+        
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for images, masks in val_loader:
+                images, masks = images.to(device), masks.to(device)
+                outputs = model(images)
+                val_loss += dice_loss(outputs, grow_mask(masks)).item()
+        
+        val_loss /= len(val_loader)
+        writer.add_scalar('Loss/val', val_loss, epoch)
+        val_losses.append(val_loss)
+        
+        print(f'Epoch {epoch+1}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
+        
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), os.path.join(output_dir, 'checkpoints', 'best_model.pth'))
+
+        if (epoch + 1) % 1 == 0:
+            model.eval()
+            with torch.no_grad():
+                images, masks = next(iter(val_loader))
+                images = images.to(device)
+                outputs = model(images)
+                
+                for i in range(min(3, len(images))):
+                    save_prediction_image(
+                        images[i],
+                        masks[i],
+                        outputs[i],
+                        os.path.join(output_dir, 'predictions', f'epoch_{epoch+1}_sample_{i}.png')
+                    )
+
+    plt.figure()
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(val_losses, label='Val Loss')
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, 'loss_curve.png'))
+    plt.close()
+
+if __name__ == '__main__':
+    data_dir = 'data'
+    output_dir = 'outputs/nuclei_segmentation'
+    train(data_dir, output_dir)
+
+"""
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -151,3 +268,4 @@ if __name__ == '__main__':
     data_dir = 'data'
     output_dir = 'outputs/nuclei_segmentation'
     train(data_dir, output_dir) 
+"""

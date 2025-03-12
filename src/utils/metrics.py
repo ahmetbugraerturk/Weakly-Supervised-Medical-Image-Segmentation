@@ -41,7 +41,7 @@ def save_prediction_image(image, mask, pred, save_path):
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
     
     # Plot original image
-    ax1.imshow(image)
+    ax1.imshow(pred, cmap='gray', vmin=0, vmax=1)
     ax1.set_title('Original Image')
     ax1.axis('off')
     
@@ -53,7 +53,7 @@ def save_prediction_image(image, mask, pred, save_path):
     
     # Plot prediction
     ax3.imshow(image)
-    ax3.imshow(pred, cmap='gray', vmin=0, vmax=1, alpha=0.5)
+    ax3.imshow(pred, cmap='gray', vmin=0, vmax=1, alpha=0.7)
     ax3.set_title(f'Prediction (IoU: {calculate_iou(mask, pred):.2%})')
     ax3.axis('off')
     
