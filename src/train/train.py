@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -17,6 +19,17 @@ def dice_loss(pred, target):
     target = target.view(-1)
     intersection = (pred * target).sum()
     return 1 - ((2. * intersection + smooth) / (pred.sum() + target.sum() + smooth))
+
+def plot_losses(train_losses, val_losses, output_dir):
+    plt.figure()
+    plt.plot(train_losses, 'r-', label='Train Loss')
+    plt.plot(val_losses, 'orange', label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Loss Curve')
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, 'loss_curve.png'))
+    plt.close()
 
 def train(data_dir, output_dir, num_epochs=100, batch_size=8, learning_rate=1e-4):
     # Create output directories
@@ -42,6 +55,7 @@ def train(data_dir, output_dir, num_epochs=100, batch_size=8, learning_rate=1e-4
     writer = SummaryWriter(os.path.join(output_dir, 'logs'))
     
     best_val_loss = float('inf')
+    train_losses, val_losses = [], []
     
     for epoch in range(num_epochs):
         # Training
@@ -73,7 +87,8 @@ def train(data_dir, output_dir, num_epochs=100, batch_size=8, learning_rate=1e-4
             train_metrics[k] /= len(train_loader)
             writer.add_scalar(f'Train/{k}', train_metrics[k], epoch)
         writer.add_scalar('Loss/train', train_loss, epoch)
-        
+        train_losses.append(train_loss)
+
         # Validation
         model.eval()
         val_loss = 0
@@ -99,7 +114,8 @@ def train(data_dir, output_dir, num_epochs=100, batch_size=8, learning_rate=1e-4
             val_metrics[k] /= len(val_loader)
             writer.add_scalar(f'Val/{k}', val_metrics[k], epoch)
         writer.add_scalar('Loss/val', val_loss, epoch)
-        
+        val_losses.append(val_loss)
+
         # Print progress
         print(f'Epoch {epoch+1}:')
         print(f'Train Loss: {train_loss:.4f}, F1: {train_metrics["f1"]:.4f}')
@@ -130,7 +146,7 @@ def train(data_dir, output_dir, num_epochs=100, batch_size=8, learning_rate=1e-4
                         outputs[i],
                         os.path.join(output_dir, 'predictions', f'epoch_{epoch+1}_sample_{i}.png')
                     )
-
+    plot_losses(train_losses, val_losses, output_dir)
 if __name__ == '__main__':
     data_dir = 'data'
     output_dir = 'outputs/nuclei_segmentation'
